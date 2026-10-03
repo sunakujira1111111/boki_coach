@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>簿記2級コーチ 画面の通しテスト</title></head>
+<body>
+<pre id="out">実行中…</pre>
+<div id="app"></div>
+<script>
+  // 画面を実際に操作して、初期設定 → 診断 → 計画 → 今日のメニュー → 学習 → 振り返り まで通す
+  var log = [];
+  window.onerror = function (m, s, l) { log.push('ERROR ' + m + ' ' + s + ':' + l); document.getElementById('out').textContent = log.join('\n'); };
+  window.alert = function (m) { log.push('alert: ' + m); };
+  window.confirm = function () { return true; };
+  globalThis.BK = { STORE_KEY: 'boki_coach_smoke' }; // 本番の学習データとは別の保存先を使う
+  localStorage.removeItem('boki_coach_smoke');
+</script>
+<script src="../js/core.js"></script>
+<script src="../js/grade.js"></script>
+<script src="../js/content.js"></script>
+<script src="../js/templates.js"></script>
+<script src="../js/mastery.js"></script>
+<script src="../js/store.js"></script>
+<script src="../js/planner.js"></script>
+<script src="../js/ui.js"></script>
+<script>
+  function click(sel) { var e = document.querySelector(sel); if (!e) throw new Error('要素なし: ' + sel); e.click(); }
+  function act(name) { click('[data-act="' + name + '"]'); }
+  function has(name) { return !!document.querySelector('[data-act="' + name + '"]'); }
+  function set(id, v) { var e = document.getElementById(id); if (!e) throw new Error('入力なし: ' + id); e.value = v; }
+  // 出題中の問題に解答する。right=true なら正解を入力し、false なら貸借を逆に入力する
+  function answer(right) {
+    var q = BK.ui.run().q, n = { D: 0, C: 0 };
+    var rows = right ? q.answer : BK.swapSides(q.answer);
+    rows.forEach(function (e) {
+      if (n[e.side] >= BK.ui.run().rows[e.side]) click('[data-act="addrow"][data-side="' + e.side + '"]');
+      set('acc' + e.side + n[e.side], e.acc); set('amt' + e.side + n[e.side], String(e.amt)); n[e.side]++;
+    });
+    click('button.primary[data-act="answer"]');
+  }
+  // 学習画面を、今日の画面か振り返りに戻るまで進める
+  function playStudy(wrongFirst) {
+    var guard = 0, wrong = wrongFirst;
+    while (BK.ui.route() === 'study' && guard++ < 80) {
+      var r = BK.ui.run();
+      if (r.phase === 'explain') act('next');
+      else if (r.phase === 'check' || r.phase === 'reason') {
+        if (r.picked === null) click('[data-act="pick"][data-i="0"]');
+        else if (has('self')) click('[data-act="self"][data-v="できた"]');
+        else act('next');
+      }
+      else if (r.phase === 'q') { answer(!wrong); wrong = false; }
+      else if (r.phase === 'result') act('next');
+    }
+    if (guard >= 80) throw new Error('学習画面が終わらない');
+  }
+  try {
+    set('exam', '2026-11-30'); act('setup');
+    log.push('設定後の画面: ' + BK.ui.route());
+    ['b01', 'b02', 'c07', 'c05'].forEach(function (id) { click('.decl[value="' + id + '"]'); });
+    act('declare');
+    playStudy(false);
+    log.push('診断後の画面: ' + BK.ui.route());
+    var S = BK.ui.state();
+    log.push('診断結果: ' + ['b01', 'b02', 'c07', 'c05'].map(function (id) { return id + '=' + S.topics[id].status + '/係数' + S.topics[id].coef; }).join(' '));
+    act('approve');
+    log.push('今日のメニュー: ' + S.menus[BK.today()].items.map(function (x) { return x.type + ':' + x.topic; }).join(', '));
+    log.push('メモ: ' + S.menus[BK.today()].notes.join(' / '));
+    act('start');
+    var g = 0;
+    while (BK.ui.route() !== 'review' && g++ < 10) {
+      if (BK.ui.route() === 'study') playStudy(g === 1);
+      else if (BK.ui.route() === 'material') { set('mno', '問題1'); act('matsave'); act('matdone'); }
+      else break;
+    }
+    log.push('メニュー終了後の画面: ' + BK.ui.route());
+    S = BK.ui.state();
+    log.push('解答数: ' + S.attempts.length + '（うち誤答 ' + S.attempts.filter(function (a) { return !a.ok; }).length + '、原因 ' + S.attempts.filter(function (a) { return !a.ok; }).map(function (a) { return a.cause; }).join(',') + '）');
+    log.push('教材記録: ' + S.materials.length);
+    ['today', 'map', 'plan', 'review', 'more', 'mock', 'settings', 'material'].forEach(function (r) {
+      click('[data-act="nav"][data-r="' + r + '"]') ;
+      if (BK.ui.route() !== r) throw new Error('画面に移動できない: ' + r);
+      if (r === 'more' || r === 'today' || r === 'map' || r === 'plan' || r === 'review') return;
+      click('[data-act="nav"][data-r="more"]');
+    });
+    click('[data-act="nav"][data-r="map"]'); click('[data-act="topic"][data-id="c11"]'); act('free'); playStudy(true);
+    log.push('自由練習後の画面: ' + BK.ui.route() + ' c11=' + BK.ui.state().topics.c11.status);
+    click('[data-act="nav"][data-r="more"]'); click('[data-act="nav"][data-r="mock"]');
+    set('mockname', '予想 第1回'); act('mockstart'); act('mockpause'); act('mockpause'); act('mockend');
+    BK.EXAM.sections.forEach(function (s) { set('sc_' + s.id, '10'); }); act('mocksave');
+    log.push('模試: ' + BK.ui.state().mocks.length + '回 合計' + BK.mockTotal(BK.ui.state().mocks[0]) + '点');
+    click('[data-act="nav"][data-r="today"]'); act('more');
+    log.push('追加メニュー: ' + BK.ui.state().menus[BK.today()].items.filter(function (x) { return !x.done; }).map(function (x) { return x.type + ':' + x.topic; }).join(', '));
+    log.push('保存の再読み込み: ' + (BK.load().attempts.length === BK.ui.state().attempts.length ? 'OK' : 'NG'));
+    log.push('SMOKE OK');
+  } catch (e) { log.push('FAILED ' + e.message + ' / 画面=' + BK.ui.route() + ' / ' + (e.stack || '').split('\n').slice(0, 3).join(' ')); }
+  localStorage.removeItem('boki_coach_smoke');
+  document.getElementById('app').innerHTML = '';
+  document.getElementById('out').textContent = log.join('\n');
+</script>
+</body>
+</html>
